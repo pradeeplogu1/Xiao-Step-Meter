@@ -133,6 +133,9 @@
 
   <div class="card">
     <button class="btn primary" id="btnConnect">Connect to StepCounter</button>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--muted);cursor:pointer">
+      <input type="checkbox" id="cbAllDevices"> Show all BLE devices in the picker (test mode, not on iOS)
+    </label>
     <button class="btn" id="btnReset">Reset counter</button>
     <button class="btn" id="btnDisconnect" disabled>Disconnect</button>
     <hr style="border:none;border-top:1px solid var(--border);margin:18px 0 8px">
@@ -161,6 +164,7 @@ var btnReset = document.getElementById("btnReset");
 var btnDisconnect = document.getElementById("btnDisconnect");
 var btnDemoStep = document.getElementById("btnDemoStep");
 var btnDemoWalk = document.getElementById("btnDemoWalk");
+var cbAllDevices = document.getElementById("cbAllDevices");
 
 var device = null;
 var server = null;
@@ -214,10 +218,10 @@ function stopDemo() {
 
 btnConnect.addEventListener("click", function () {
   log("scanning for BLE device ...");
-  navigator.bluetooth.requestDevice({
-    filters: [{ namePrefix: "StepCounter" }, { services: [SERVICE_UUID] }],
-    optionalServices: [SERVICE_UUID]
-  }).then(function (d) {
+  var opts = cbAllDevices.checked
+    ? { acceptAllDevices: true, optionalServices: [SERVICE_UUID] }
+    : { filters: [{ namePrefix: "StepCounter" }, { services: [SERVICE_UUID] }], optionalServices: [SERVICE_UUID] };
+  navigator.bluetooth.requestDevice(opts).then(function (d) {
     device = d;
     log("selected device: " + (d.name || "unknown"));
     if (device.addEventListener) {
