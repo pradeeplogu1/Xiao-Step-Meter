@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StepView — XIAO Step Counter</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #2f81f7;
+    --green: #3fb950;
+    --red: #f85149;
+    --amber: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  .wrap { width: 100%; max-width: 420px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  .big-number {
+    font-size: 84px;
+    font-weight: 700;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    margin: 8px 0 4px;
+  }
+  .big-label {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .badge-row { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
+  .badge {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .badge.on { color: var(--green); border-color: var(--green); }
+  .badge.demo { color: var(--amber); border-color: var(--amber); }
+
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    margin-top: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #21262d;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .row { display: flex; gap: 10px; }
+  .row .btn { margin-top: 10px; }
+
+  .log {
+    background: #010409;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    height: 130px;
+    overflow-y: auto;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .banner {
+    background: #1c2128;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>StepView</h1>
+  <p class="sub">XIAO nRF54LM20A step counter &middot; Web Bluetooth</p>
+
+  <div class="banner" id="bleBanner">
+    Web Bluetooth is not available in this browser. Use Chrome/Edge on desktop,
+    or <b>Bluefy</b> / WebBLE (or the iOSWebBLE Safari extension) on iPhone.
+    Demo mode below works in any browser.
+  </div>
+
+  <div class="card">
+    <div class="big-number" id="steps">0</div>
+    <div class="big-label">steps</div>
+    <div class="badge-row">
+      <span class="badge" id="statusBadge">disconnected</span>
+      <span class="badge demo" id="demoBadge" style="display:none">demo mode</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <button class="btn primary" id="btnConnect">Connect to StepCounter</button>
+    <button class="btn" id="btnReset">Reset counter</button>
+    <button class="btn" id="btnDisconnect" disabled>Disconnect</button>
+    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0 8px">
+    <div style="color:var(--muted);font-size:13px;margin-bottom:4px">Demo mode (no hardware needed)</div>
+    <div class="row">
+      <button class="btn" id="btnDemoStep">+1 step</button>
+      <button class="btn" id="btnDemoWalk">Walk on/off</button>
+    </div>
+  </div>
+
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+var SERVICE_UUID = "4b0ad7a0-4b2c-11ee-be56-0242ac120002";
+var STEPS_UUID   = "4b0ad7a1-4b2c-11ee-be56-0242ac120002";
+var RESET_UUID   = "4b0ad7a2-4b2c-11ee-be56-0242ac120002";
+
+var stepsEl = document.getElementById("steps");
+var logEl = document.getElementById("log");
+var statusBadge = document.getElementById("statusBadge");
+var demoBadge = document.getElementById("demoBadge");
+var bleBanner = document.getElementById("bleBanner");
+var btnConnect = document.getElementById("btnConnect");
+var btnReset = document.getElementById("btnReset");
+var btnDisconnect = document.getElementById("btnDisconnect");
+var btnDemoStep = document.getElementById("btnDemoStep");
+var btnDemoWalk = document.getElementById("btnDemoWalk");
+
+var device = null;
+var server = null;
+var stepsChr = null;
+var resetChr = null;
+var steps = 0;
+var demoMode = false;
+var demoWalkTimer = null;
+
+function log(msg) {
+  var t = new Date().toLocaleTimeString();
+  logEl.textContent += "[" + t + "] " + msg + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setSteps(value) {
+  steps = value;
+  stepsEl.textContent = String(value);
+}
+
+function setStatus(text, connected) {
+  statusBadge.textContent = text;
+  statusBadge.className = "badge" + (connected ? " on" : "");
+}
+
+function onStepsValue(data) {
+  var value = 0;
+  if (data.byteLength >= 4) {
+    value = data.getUint32(0, true);
+  }
+  setSteps(value);
+}
+
+function handleStepsNotification(event) {
+  onStepsValue(event.target.value);
+}
+
+function showDemoBadge(show) {
+  demoBadge.style.display = show ? "" : "none";
+}
+
+function stopDemo() {
+  if (demoWalkTimer) {
+    clearInterval(demoWalkTimer);
+    demoWalkTimer = null;
+  }
+  btnDemoWalk.textContent = "Walk on/off";
+  demoMode = false;
+  showDemoBadge(false);
+}
+
+btnConnect.addEventListener("click", function () {
+  log("scanning for BLE device ...");
+  navigator.bluetooth.requestDevice({
+    filters: [{ namePrefix: "StepCounter" }, { services: [SERVICE_UUID] }],
+    optionalServices: [SERVICE_UUID]
+  }).then(function (d) {
+    device = d;
+    log("selected device: " + (d.name || "unknown"));
+    if (device.addEventListener) {
+      device.addEventListener("gattserverdisconnected", onDisconnected);
+    }
+    return device.gatt.connect();
+  }).then(function (gattServer) {
+    server = gattServer;
+    log("connected to GATT server");
+    return server.getPrimaryService(SERVICE_UUID);
+  }).then(function (service) {
+    log("found step counter service");
+    return Promise.all([
+      service.getCharacteristic(STEPS_UUID),
+      service.getCharacteristic(RESET_UUID)
+    ]);
+  }).then(function (chars) {
+    stepsChr = chars[0];
+    resetChr = chars[1];
+    log("found steps + reset characteristics");
+    return stepsChr.startNotifications();
+  }).then(function (chr) {
+    chr.addEventListener("characteristicvaluechanged", handleStepsNotification);
+    log("subscribed to step notifications");
+    stopDemo();
+    setStatus("connected", true);
+    btnConnect.disabled = true;
+    btnDisconnect.disabled = false;
+    return stepsChr.readValue();
+  }).then(function (value) {
+    onStepsValue(value);
+    log("current step count: " + steps);
+  }).catch(function (err) {
+    log("BLE error: " + err.message);
+    if (server && server.connected) {
+      server.disconnect();
+    }
+  });
+});
+
+function onDisconnected() {
+  log("device disconnected");
+  setStatus("disconnected", false);
+  btnConnect.disabled = false;
+  btnDisconnect.disabled = true;
+  device = null;
+  server = null;
+  stepsChr = null;
+  resetChr = null;
+}
+
+btnDisconnect.addEventListener("click", function () {
+  if (server && server.connected) {
+    server.disconnect();
+  }
+  onDisconnected();
+});
+
+btnReset.addEventListener("click", function () {
+  if (demoMode) {
+    setSteps(0);
+    log("[demo] steps reset to 0");
+    return;
+  }
+  if (!resetChr) {
+    log("not connected — nothing to reset");
+    return;
+  }
+  resetChr.writeValue(new Uint8Array([1])).then(function () {
+    log("reset command sent");
+    setSteps(0);
+  }).catch(function (err) {
+    log("reset failed: " + err.message);
+  });
+});
+
+btnDemoStep.addEventListener("click", function () {
+  stopDemo();
+  demoMode = true;
+  showDemoBadge(true);
+  setSteps(steps + 1);
+  log("[demo] step " + steps);
+});
+
+btnDemoWalk.addEventListener("click", function () {
+  if (demoWalkTimer) {
+    stopDemo();
+    log("[demo] walking stopped");
+    return;
+  }
+  demoMode = true;
+  showDemoBadge(true);
+  demoWalkTimer = setInterval(function () {
+    setSteps(steps + 1);
+    log("[demo] step " + steps);
+  }, 1000);
+  btnDemoWalk.textContent = "Stop walking";
+  log("[demo] walking started (1 step/sec)");
+});
+
+if (!navigator.bluetooth) {
+  bleBanner.style.display = "block";
+  btnConnect.disabled = true;
+}
+
+log("StepView ready");
+log("Web Bluetooth: " + (navigator.bluetooth ? "available" : "NOT available (use demo mode or Bluefy)"));
+</script>
+</body>
+</html>
